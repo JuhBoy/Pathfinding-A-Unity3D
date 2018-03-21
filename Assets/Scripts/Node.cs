@@ -7,16 +7,19 @@ public class Node {
     // =========================
     //          Costs
     // =========================
-    private int _gCost;
-    private int _hCost;
+    private double _gCost;
+    private double _hCost;
 
-    public int FCost { get { return _gCost + _hCost; } }
-    public int GCost { set { _gCost = value; } }
-    public int HCost { set { _hCost = value; } }
+    public double? FCost {
+        get { return _gCost + _hCost; } 
+    }
+    public double GCost { set { _gCost = value; } get { return (double) _gCost; } }
+    public double HCost { set { _hCost = value; } get { return (double) _hCost; } }
 
     // ====================================
     //                Datas
     // ====================================
+    public Node parent;
     public bool IsWalkable { get; set; }
     public Vector3 WorldPosition { get; set; }
     public Vector2Int GridIndexes { get; set; }
