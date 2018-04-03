@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 
 public class PathFinder {
 
@@ -15,80 +16,85 @@ public class PathFinder {
     /// </summary>
     public float D2 = Mathf.Sqrt(2);
 
-    /// <summary>
-    /// The starting point and target used to create the path on the given Grid.
-    /// </summary>
-    private Node Start;
-    private Node End;
-
-    public List<Node> AStarPath = new List<Node>();
-
-    /// <summary>
-    /// Node to node path, handle historisation during computing processing
-    /// </summary>
-    private Dictionary<Node, Node> nodesPath = new Dictionary<Node, Node>();
-
-    /// <summary>
-    /// Register all costs for the current processing
-    /// </summary>
-    private Dictionary<Node, double> NodeCost = new Dictionary<Node, double>();
-
-    public PathFinder(Node start, Node end, ref Node[,] nodes, MGrid grid) {
-        Start = start;
-        End = end;
+    public PathFinder(MGrid grid) {
         Grid = grid;
     }
 
-    /// <summary>
-    /// Handle A* algorithme
-    /// </summary>
-    /// <returns>The compute.</returns>
-    public Stack<Node> Compute() {
-        Queue<Node> frontier = new Queue<Node>();
-        frontier.Enqueue(Start);
+    public Stack<Node> Compute(Node start, Node end) {
+        List<Node> openList = new List<Node>();
+        Stack<Node> closedList = new Stack<Node>();
 
-        NodeCost[Start] = 0;
-        nodesPath[Start] = Start;
+        start.GCost = 0.0d;
+        openList.Add(start);
 
-        while (frontier.Count > 0) {
-            Node current = frontier.Dequeue();
-            Node[] neighbours = Grid.GetNeighbours(current);
+        while (openList.Count > 0) {
+            Node current;
+            FindLowestFValue(openList, out current);
 
-            foreach (Node neighbour in neighbours) {
-                double cost = NodeCost[current] + DiagManathanDistance(neighbour, current);
-                if (!neighbour.IsWalkable) continue;
+            openList.Remove(current);
+            closedList.Push(current);
 
-                if (End.Equals(neighbour)) {
-                    frontier.Clear();
-                    End.parent = current;
+            foreach (Node neighbour in Grid.GetNeighbours(current)) {
+                if (!neighbour.IsWalkable || closedList.Contains(neighbour)) { continue; }
+
+                if (neighbour.Equals(end)) {
+                    openList.Clear();
+                    end.parent = current;
                     break;
                 }
 
-                if (!NodeCost.ContainsKey(neighbour) || cost < NodeCost[neighbour]) {
-                    neighbour.GCost = cost;
-                    neighbour.HCost = cost + DiagManathanDistance(neighbour, End);
-
-                    NodeCost[neighbour] = cost;
-                    nodesPath[neighbour] = current;
-
+                if (!openList.Contains(neighbour)) {
+                    neighbour.GCost = current.GCost + DiagManathanDistance(neighbour, current);
+                    neighbour.HCost = DiagManathanDistance(neighbour, end);
                     neighbour.parent = current;
-                    frontier.Enqueue(neighbour);
+                    openList.Add(neighbour);
+#if MYDEBUG
+                    CreateBoxDebug(neighbour.WorldPosition, neighbour);
+#endif
+                } else {
+                    double previousFscore = (double)neighbour.FCost;
+                    double newFcost = (double)current.GCost + DiagManathanDistance(neighbour, current) + (double)neighbour.HCost;
+
+                    if (newFcost < previousFscore) {
+                        neighbour.GCost = current.GCost + DiagManathanDistance(neighbour, current);
+                        neighbour.parent = current;
+#if MYDEBUG
+                        UpdateBoxDebug(neighbour);
+#endif
+                    }
                 }
             }
         }
 
-        Node n = End;
-        Stack<Node> aStarPath = new Stack<Node>();
+        return ComputePath(end);
+    }
 
-        while (n.parent != null) {
-            AStarPath.Add(n.parent);
-            aStarPath.Push(n.parent);
-            n = n.parent;
+    private void FindLowestFValue(List<Node> list, out Node current) {
+        double lowest = double.MaxValue;
+        current = list[0];
+
+        foreach (Node node in list) {
+            if (node.FCost <= lowest) {
+                lowest = (double)node.FCost;
+                current = node;
+            }
         }
-        aStarPath.Push(n.parent);
+    }
 
-        AStarPath.Reverse();
-        return aStarPath;
+    private Stack<Node> ComputePath(Node end) {
+        Node currentNode = end;
+        Stack<Node> path = new Stack<Node>();
+        path.Push(end);
+
+        while (currentNode.parent != null) {
+            Node temp = currentNode.parent;
+            path.Push(temp);
+
+            currentNode.parent = null;
+            currentNode = temp;
+        }
+
+        return path;
     }
 
     // ===========================
@@ -118,6 +124,42 @@ public class PathFinder {
         float distX = Mathf.Abs(nodeA.GridIndexes.x - nodeB.GridIndexes.x);
         float distY = Mathf.Abs(nodeA.GridIndexes.y - nodeB.GridIndexes.y);
 
-        return D * (distX + distY) + (D2 - 2 * D) * Mathf.Min(distX, distY);
+        double cost = D * (distX + distY) + (D2 - 2 * D) * Mathf.Min(distX, distY);
+        cost += nodeA.Modifier;
+
+        return cost;
     }
+
+
+#if MYDEBUG
+    public List<GameObject> games = new List<GameObject>();
+
+    private void CreateBoxDebug(Vector3 position, Node node) {
+        GameObject g = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        g.transform.position = position;
+        var d = g.AddComponent<DebugCube>();
+        d.hcost = node.HCost;
+        d.fcost = (double)node.FCost;
+        d.gcost = (double)node.GCost;
+        d.parent = node.parent;
+        games.Add(g);
+    }
+
+    private void UpdateBoxDebug(Node node) {
+        DebugCube d = games.Find(n => n.transform.position == node.WorldPosition).GetComponent<DebugCube>();
+        d.fcost = (double)node.FCost;
+        d.gcost = (double)node.GCost;
+        d.hcost = node.HCost;
+        d.parent = node.parent;
+    }
+
+    public class DebugCube : MonoBehaviour {
+        public double fcost;
+        public double gcost;
+        public double hcost;
+        public Node parent;
+    }
+#endif
 }
+
+

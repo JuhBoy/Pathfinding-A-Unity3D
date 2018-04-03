@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
 
 public class MGrid : MonoBehaviour {
 
@@ -27,11 +28,15 @@ public class MGrid : MonoBehaviour {
     //       PathFinder
     // =====================
     public PathFinder PathFinder;
-    public bool JobRunning;
-    public Stack<Node> _orderedNodes;
-    public Stack<Node> OrderedNodes { get { return _orderedNodes; } set { _orderedNodes = value; JobRunning = false;} }
+    public Stack<Node> OrderedNodes;
+
+    // =====================
+    //         Move
+    // =====================
+    private Node currentDestination;
 
     void Start() {
+        PathFinder = new PathFinder(this);
         NodeDiamter = NodeRadius * 2;
         Rows = Mathf.RoundToInt(GridSize.x / NodeDiamter);
         Cols = Mathf.RoundToInt(GridSize.y / NodeDiamter);
@@ -50,15 +55,11 @@ public class MGrid : MonoBehaviour {
             }
         }
 
-        if (Input.GetKeyDown(KeyCode.Space) && !JobRunning) {
-            JobRunning = true;
-            PathFinder = new PathFinder(PlayerGridPosition, EndPointGridPosition, ref NodesList, this);
-            OrderedNodes = PathFinder.Compute();
-        }
-
-        if (OrderedNodes != null && OrderedNodes.Count > 0) {
+        if (OrderedNodes != null)
             MovePlayer();
-        }
+
+        if (Input.GetKeyDown(KeyCode.Space) && OrderedNodes == null)
+            OrderedNodes = PathFinder.Compute(PlayerGridPosition, EndPointGridPosition);
     }
 
     #region Internal
@@ -76,6 +77,11 @@ public class MGrid : MonoBehaviour {
                 );
                 bool walkable = !Physics.CheckSphere(worldPosition, NodeRadius, UnwalkableMask);
                 NodesList[r, c] = new Node(walkable, worldPosition, new Vector2Int(r, c));
+
+                // TODO: High cost zone, to remove
+                if (r <= 3 && c <= 9) {
+                    NodesList[r, c].Modifier = 2f;
+                }
             }
         }
     }
@@ -121,24 +127,31 @@ public class MGrid : MonoBehaviour {
 
     #endregion
 
-    Node currentDestination;
-
     private void MovePlayer() {
-        // FIXME: Distance using Vector3 isn't accurate. Change the computation methode + REMOVE Move() From there
-        if (currentDestination == null || Vector3.Distance(currentDestination.WorldPosition, PlayerWorldPosition.position) <= 0.95f) {
+        if (OrderedNodes.Any() &&
+            (currentDestination == null || DistanceBetweenIsUnder2DEpsilone(PlayerWorldPosition.position, currentDestination.WorldPosition))) {
             currentDestination = OrderedNodes.Pop();
         }
 
         if (currentDestination != null) {
             var target = new Vector3(currentDestination.WorldPosition.x, PlayerWorldPosition.position.y, currentDestination.WorldPosition.z);
-            PlayerWorldPosition.position = Vector3.MoveTowards(PlayerWorldPosition.position, target, 5 * Time.deltaTime);
+            PlayerWorldPosition.position = Vector3.MoveTowards(PlayerWorldPosition.position, target, 9 * Time.deltaTime);
+
+            if (!OrderedNodes.Any() && DistanceBetweenIsUnder2DEpsilone(PlayerWorldPosition.position, currentDestination.WorldPosition)) {
+                currentDestination = null;
+                OrderedNodes.Clear();
+                OrderedNodes = null;
+            }
         }
     }
 
-    // ==========================================
-    //                  DEBUG
-    // ==========================================
+    private bool DistanceBetweenIsUnder2DEpsilone(Vector3 a, Vector3 b) {
+        return Vector2.Distance(
+                new Vector2(a.x, a.z),
+                new Vector2(b.x, b.z)) <= float.Epsilon;
+    }
 
+#if MYDEBUG
     private void OnDrawGizmos() {
         // Debug the world size
         Gizmos.DrawWireCube(transform.position, new Vector3(GridSize.x, 1, GridSize.y));
@@ -163,4 +176,5 @@ public class MGrid : MonoBehaviour {
                 Gizmos.DrawCube(n.WorldPosition, new Vector3(NodeRadius, 0.4f, NodeRadius));
             }
     }
+#endif
 }
