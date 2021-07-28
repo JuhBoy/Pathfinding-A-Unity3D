@@ -4,7 +4,6 @@ using UnityEngine;
 using System.Linq;
 
 public class MGrid : MonoBehaviour {
-
     public Transform PlayerWorldPosition;
     public Transform EndPointWorldPositio;
 
@@ -27,20 +26,20 @@ public class MGrid : MonoBehaviour {
     // =====================
     //       PathFinder
     // =====================
-    public PathFinder PathFinder;
-    public Stack<Node> OrderedNodes;
+    public Heuristic heuristic;
+    private PathFinder _pathFinder;
+    private Stack<Node> _orderedNodes;
 
     // =====================
     //         Move
     // =====================
-    private Node currentDestination;
+    private Node _currentDestination;
 
     void Start() {
-        PathFinder = new PathFinder(this);
+        _pathFinder = new PathFinder(this, heuristic);
         NodeDiamter = NodeRadius * 2;
         Rows = Mathf.RoundToInt(GridSize.x / NodeDiamter);
         Cols = Mathf.RoundToInt(GridSize.y / NodeDiamter);
-
         FillNodes();
     }
 
@@ -50,27 +49,34 @@ public class MGrid : MonoBehaviour {
                 PlayerGridPosition = NodePositionFromWorldPosition(PlayerWorldPosition.transform.position);
                 EndPointGridPosition = NodePositionFromWorldPosition(EndPointWorldPositio.transform.position);
             } catch (Exception e) {
-                // if it's out
                 Debug.Log("e:" + e);
             }
         }
 
-        if (OrderedNodes != null)
+        if (_orderedNodes != null)
             MovePlayer();
 
-        if (Input.GetKeyDown(KeyCode.Space) && OrderedNodes == null)
-            OrderedNodes = PathFinder.Compute(PlayerGridPosition, EndPointGridPosition);
+        if (Input.GetKeyDown(KeyCode.Space) && _orderedNodes == null) {
+            _pathFinder.ClearCache();
+            _orderedNodes = _pathFinder.Compute(PlayerGridPosition, EndPointGridPosition);
+        }
+        
+        if (Input.GetKeyDown(KeyCode.Return)) {
+            _orderedNodes = null;
+            _pathFinder.ClearCache();
+        }
     }
 
     #region Internal
 
     private void FillNodes() {
         NodesList = new Node[Rows, Cols];
-        BottomLeftWorldPoint = transform.position - (Vector3.forward * GridSize.y / 2) - (Vector3.right * GridSize.x / 2) + ((Vector3.right + Vector3.forward) * NodeRadius);
+        BottomLeftWorldPoint = transform.position - (Vector3.forward * GridSize.y / 2) - (Vector3.right * GridSize.x / 2) +
+                               ((Vector3.right + Vector3.forward) * NodeRadius);
 
         for (int r = 0; r < Rows; r++) {
             for (int c = 0; c < Cols; c++) {
-                Vector3 worldPosition = new Vector3(
+                var worldPosition = new Vector3(
                     x: BottomLeftWorldPoint.x + (r * NodeDiamter),
                     y: 0,
                     z: BottomLeftWorldPoint.z + (c * NodeDiamter)
@@ -87,11 +93,10 @@ public class MGrid : MonoBehaviour {
     }
 
     private Node NodePositionFromWorldPosition(Vector3 worldPosition) {
-        Vector2 percentPosition = new Vector2();
-
-        percentPosition.x = ((worldPosition.x + (GridSize.x / 2 - 1)) - transform.position.x) / GridSize.x * Rows;
-        percentPosition.y = ((worldPosition.z + (GridSize.y / 2 - 1)) - transform.position.z) / GridSize.y * Cols;
-
+        var percentPosition = new Vector2 {
+            x = ((worldPosition.x + (GridSize.x / 2 - 1)) - transform.position.x) / GridSize.x * Rows,
+            y = ((worldPosition.z + (GridSize.y / 2 - 1)) - transform.position.z) / GridSize.y * Cols
+        };
         return NodesList[Mathf.RoundToInt(percentPosition.x), Mathf.RoundToInt(percentPosition.y)];
     }
 
@@ -128,30 +133,30 @@ public class MGrid : MonoBehaviour {
     #endregion
 
     private void MovePlayer() {
-        if (OrderedNodes.Any() &&
-            (currentDestination == null || DistanceBetweenIsUnder2DEpsilone(PlayerWorldPosition.position, currentDestination.WorldPosition))) {
-            currentDestination = OrderedNodes.Pop();
+        if (_orderedNodes.Any() &&
+            (_currentDestination == null || DistanceBetweenIsUnder2DEpsilon(PlayerWorldPosition.position, _currentDestination.WorldPosition))) {
+            _currentDestination = _orderedNodes.Pop();
         }
 
-        if (currentDestination != null) {
-            var target = new Vector3(currentDestination.WorldPosition.x, PlayerWorldPosition.position.y, currentDestination.WorldPosition.z);
+        if (_currentDestination != null) {
+            var target = new Vector3(_currentDestination.WorldPosition.x, PlayerWorldPosition.position.y, _currentDestination.WorldPosition.z);
             PlayerWorldPosition.position = Vector3.MoveTowards(PlayerWorldPosition.position, target, 9 * Time.deltaTime);
 
-            if (!OrderedNodes.Any() && DistanceBetweenIsUnder2DEpsilone(PlayerWorldPosition.position, currentDestination.WorldPosition)) {
-                currentDestination = null;
-                OrderedNodes.Clear();
-                OrderedNodes = null;
+            if (!_orderedNodes.Any() && DistanceBetweenIsUnder2DEpsilon(PlayerWorldPosition.position, _currentDestination.WorldPosition)) {
+                _currentDestination = null;
+                _orderedNodes.Clear();
+                _orderedNodes = null;
             }
         }
     }
 
-    private bool DistanceBetweenIsUnder2DEpsilone(Vector3 a, Vector3 b) {
+    private static bool DistanceBetweenIsUnder2DEpsilon(Vector3 a, Vector3 b) {
         return Vector2.Distance(
-                new Vector2(a.x, a.z),
-                new Vector2(b.x, b.z)) <= float.Epsilon;
+            new Vector2(a.x, a.z),
+            new Vector2(b.x, b.z)) <= float.Epsilon;
     }
 
-#if MYDEBUG
+#if UNITY_EDITOR
     private void OnDrawGizmos() {
         // Debug the world size
         Gizmos.DrawWireCube(transform.position, new Vector3(GridSize.x, 1, GridSize.y));
@@ -170,8 +175,8 @@ public class MGrid : MonoBehaviour {
                 Gizmos.DrawWireCube(n.WorldPosition - (Vector3.up / 2), new Vector3(NodeDiamter - 0.1f, 0.8f, NodeDiamter - 0.1f));
             }
 
-        if (OrderedNodes != null)
-            foreach (Node n in OrderedNodes) {
+        if (_orderedNodes != null)
+            foreach (Node n in _orderedNodes) {
                 Gizmos.color = Color.magenta;
                 Gizmos.DrawCube(n.WorldPosition, new Vector3(NodeRadius, 0.4f, NodeRadius));
             }

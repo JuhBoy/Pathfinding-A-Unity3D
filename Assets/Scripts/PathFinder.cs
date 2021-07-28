@@ -1,64 +1,60 @@
+using System;
 using UnityEngine;
 using System.Collections.Generic;
-using System.Linq;
+
+public enum Heuristic {
+    Manhattan,
+    Euclidean,
+    Chebyshev
+}
 
 public class PathFinder {
-
     private MGrid Grid;
+    private Heuristic UsedHeuristic { get; }
 
-    /// <summary>
-    /// The heuristic constant applied on computation for a minimum normal cost
-    /// </summary>
-    public float D = 1;
-
-    /// <summary>
-    /// Cost for diagonal heuristics (sqrt(2) -> octile distance)
-    /// </summary>
-    public float D2 = Mathf.Sqrt(2);
-
-    public PathFinder(MGrid grid) {
+    public PathFinder(MGrid grid, Heuristic heuristic) {
         Grid = grid;
+        UsedHeuristic = heuristic;
     }
 
     public Stack<Node> Compute(Node start, Node end) {
-        List<Node> openList = new List<Node>();
-        Stack<Node> closedList = new Stack<Node>();
+        var openList = new List<Node>(8);
+        var closedList = new Stack<Node>(Grid.Cols * Grid.Rows);
 
         start.GCost = 0.0d;
         openList.Add(start);
 
         while (openList.Count > 0) {
-            Node current;
-            FindLowestFValue(openList, out current);
-
-            openList.Remove(current);
+            PopLowestValue(openList, out Node current);
             closedList.Push(current);
 
             foreach (Node neighbour in Grid.GetNeighbours(current)) {
-                if (!neighbour.IsWalkable || closedList.Contains(neighbour)) { continue; }
+                if (!neighbour.IsWalkable || closedList.Contains(neighbour)) {
+                    continue;
+                }
 
                 if (neighbour.Equals(end)) {
                     openList.Clear();
-                    end.parent = current;
+                    end.Parent = current;
                     break;
                 }
 
                 if (!openList.Contains(neighbour)) {
-                    neighbour.GCost = current.GCost + DiagManathanDistance(neighbour, current);
-                    neighbour.HCost = DiagManathanDistance(neighbour, end);
-                    neighbour.parent = current;
+                    neighbour.GCost = current.GCost + Heuristic(neighbour, current);
+                    neighbour.HCost = Heuristic(neighbour, end);
+                    neighbour.Parent = current;
                     openList.Add(neighbour);
-#if MYDEBUG
+#if UNITY_EDITOR
                     CreateBoxDebug(neighbour.WorldPosition, neighbour);
 #endif
                 } else {
-                    double previousFscore = (double)neighbour.FCost;
-                    double newFcost = (double)current.GCost + DiagManathanDistance(neighbour, current) + (double)neighbour.HCost;
+                    double newGCost = current.GCost + Heuristic(neighbour, current);
+                    double newFCost = newGCost + neighbour.HCost;
 
-                    if (newFcost < previousFscore) {
-                        neighbour.GCost = current.GCost + DiagManathanDistance(neighbour, current);
-                        neighbour.parent = current;
-#if MYDEBUG
+                    if (newFCost < neighbour.FCost) {
+                        neighbour.GCost = newGCost;
+                        neighbour.Parent = current;
+#if UNITY_EDITOR
                         UpdateBoxDebug(neighbour);
 #endif
                     }
@@ -69,28 +65,30 @@ public class PathFinder {
         return ComputePath(end);
     }
 
-    private void FindLowestFValue(List<Node> list, out Node current) {
-        double lowest = double.MaxValue;
+    private static void PopLowestValue(IList<Node> list, out Node current) {
+        var lowest = double.MaxValue;
         current = list[0];
 
         foreach (Node node in list) {
             if (node.FCost <= lowest) {
-                lowest = (double)node.FCost;
+                lowest = node.FCost;
                 current = node;
             }
         }
+
+        list.Remove(current);
     }
 
-    private Stack<Node> ComputePath(Node end) {
+    private static Stack<Node> ComputePath(Node end) {
         Node currentNode = end;
-        Stack<Node> path = new Stack<Node>();
+        var path = new Stack<Node>();
         path.Push(end);
 
-        while (currentNode.parent != null) {
-            Node temp = currentNode.parent;
+        while (currentNode.Parent != null) {
+            Node temp = currentNode.Parent;
             path.Push(temp);
 
-            currentNode.parent = null;
+            currentNode.Parent = null;
             currentNode = temp;
         }
 
@@ -101,56 +99,65 @@ public class PathFinder {
     //         Heuristics
     // ===========================
 
+    private double Heuristic(Node nodeA, Node nodeB) {
+        double result = UsedHeuristic switch {
+            global::Heuristic.Manhattan => ManhattanDistance(nodeA, nodeB),
+            global::Heuristic.Euclidean => EuclideanDistance(nodeA, nodeB),
+            global::Heuristic.Chebyshev => ChebyshevDistance(nodeA, nodeB),
+            _ => throw new ArgumentOutOfRangeException()
+        };
+        return result;
+    }
+
     /// <summary>
-    /// Manathans the distance heuristique for quadra move. (north / east / south / west
+    /// Manhattan Distance + terrain constraint. (north / east / south / west)
     /// </summary>
-    /// <returns>The distance.</returns>
-    /// <param name="nodeA">Node a.</param>
-    /// <param name="nodeB">Node b.</param>
-    private double ManathanDistance(Node nodeA, Node nodeB) {
+    private double ManhattanDistance(Node nodeA, Node nodeB) {
         double distX = Mathf.Abs(nodeA.GridIndexes.x - nodeB.GridIndexes.x);
         double distY = Mathf.Abs(nodeA.GridIndexes.y - nodeB.GridIndexes.y);
-
-        return D * (distX * distY);
+        return distX + distY + nodeA.Modifier;
     }
 
     /// <summary>
-    /// Diags the manathan distance heuristic. Handle 8 moves situation using squared algorithm. (NE , NO, SE, SO ...)
+    /// Euclidean² distance + terrain constraint.
     /// </summary>
-    /// <returns>The manathan distance.</returns>
-    /// <param name="nodeA">Node a.</param>
-    /// <param name="nodeB">Node b.</param>
-    private double DiagManathanDistance(Node nodeA, Node nodeB) {
-        float distX = Mathf.Abs(nodeA.GridIndexes.x - nodeB.GridIndexes.x);
-        float distY = Mathf.Abs(nodeA.GridIndexes.y - nodeB.GridIndexes.y);
+    private double EuclideanDistance(Node nodeA, Node nodeB) { return Vector3.Distance(nodeA.WorldPosition, nodeB.WorldPosition) + nodeA.Modifier; }
 
-        double cost = D * (distX + distY) + (D2 - 2 * D) * Mathf.Min(distX, distY);
-        cost += nodeA.Modifier;
-
-        return cost;
+    /// <summary>
+    /// Chebyshev distance (Chess distance) + terrain constraint.
+    /// </summary>
+    private static double ChebyshevDistance(Node nodeA, Node nodeB) {
+        return Mathf.Max(Mathf.Abs(nodeA.GridIndexes.x - nodeB.GridIndexes.x), Mathf.Abs(nodeA.GridIndexes.y - nodeB.GridIndexes.y)) + nodeA.Modifier;
     }
 
 
-#if MYDEBUG
-    public List<GameObject> games = new List<GameObject>();
+#if UNITY_EDITOR
+    private readonly List<GameObject> _debugObjectCache = new List<GameObject>();
 
     private void CreateBoxDebug(Vector3 position, Node node) {
-        GameObject g = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var g = GameObject.CreatePrimitive(PrimitiveType.Cube);
         g.transform.position = position;
         var d = g.AddComponent<DebugCube>();
         d.hcost = node.HCost;
-        d.fcost = (double)node.FCost;
-        d.gcost = (double)node.GCost;
-        d.parent = node.parent;
-        games.Add(g);
+        d.fcost = (double) node.FCost;
+        d.gcost = (double) node.GCost;
+        d.parent = node.Parent;
+        _debugObjectCache.Add(g);
     }
 
     private void UpdateBoxDebug(Node node) {
-        DebugCube d = games.Find(n => n.transform.position == node.WorldPosition).GetComponent<DebugCube>();
-        d.fcost = (double)node.FCost;
-        d.gcost = (double)node.GCost;
-        d.hcost = node.HCost;
-        d.parent = node.parent;
+        var debugCube = _debugObjectCache.Find(n => n.transform.position == node.WorldPosition).GetComponent<DebugCube>();
+        debugCube.fcost = (double) node.FCost;
+        debugCube.gcost = (double) node.GCost;
+        debugCube.hcost = node.HCost;
+        debugCube.parent = node.Parent;
+    }
+
+    public void ClearCache() {
+        foreach (GameObject obj in _debugObjectCache) {
+            UnityEngine.Object.Destroy(obj);
+        }
+        _debugObjectCache.Clear();
     }
 
     public class DebugCube : MonoBehaviour {
@@ -161,5 +168,3 @@ public class PathFinder {
     }
 #endif
 }
-
-
